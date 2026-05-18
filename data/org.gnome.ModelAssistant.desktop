@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Model Assistant
+Comment=Launch local AI model runtimes
+Exec=model-assistant
+Icon=org.gnome.ModelAssistant
+StartupNotify=true
+Terminal=false
+DBusActivatable=true
+Categories=GNOME;Utility;System;
+Keywords=AI;Model;LLM;Inference;GNOME;

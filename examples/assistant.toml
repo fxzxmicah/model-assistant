@@ -1,0 +1,33 @@
+config_version = 1
+
+[runner]
+env = { XDG_CACHE_HOME = "/tmp/.cache" }
+
+[runtimes.example]
+model_arg = "--model"
+
+[runtimes.example.modes.cli]
+executable = "example-cli"
+interactive = true
+args = []
+
+[runtimes.example.modes.server]
+executable = "example-server"
+interactive = false
+args = ["--host", "0.0.0.0", "--port", "8080"]
+
+[models.demo]
+title = "Demo Model"
+file = "demo-model.bin"
+default_runtime = "example"
+
+[models.demo.runtimes.example]
+default_mode = "cli"
+env = {}
+args = []
+
+[models.demo.runtimes.example.modes.cli]
+args = []
+
+[models.demo.runtimes.example.modes.server]
+args = []

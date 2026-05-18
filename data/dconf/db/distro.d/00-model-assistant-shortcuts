@@ -1,0 +1,7 @@
+[org/gnome/settings-daemon/plugins/media-keys]
+custom-keybindings=['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/model-assistant/']
+
+[org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/model-assistant]
+name='Model Assistant'
+command='gtk-launch org.gnome.ModelAssistant'
+binding='<Shift><Super>F23'
