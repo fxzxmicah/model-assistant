@@ -1,11 +1,8 @@
-use std::rc::Rc;
-
 use libadwaita as adw;
 use libadwaita::prelude::{AdwDialogExt, AlertDialogExt, ApplicationExt};
 
 use crate::app::context::AppContext;
 use crate::core::config::AppConfig;
-use crate::runner::manager::RunnerManager;
 use crate::runner::paths::{ResolvedPaths, StartupValidation};
 
 pub fn preflight() -> Result<AppContext, StartupValidation> {
@@ -21,14 +18,13 @@ pub fn preflight() -> Result<AppContext, StartupValidation> {
         return Err(validation);
     }
 
-    let runner = Rc::new(RunnerManager::new(paths.clone(), config.runner.env.clone()));
-    Ok(AppContext { config, paths, runner })
+    Ok(AppContext::new(config, paths))
 }
 
 pub fn present_startup_failure_dialog(app: &adw::Application, validation: &StartupValidation) {
     let dialog = adw::AlertDialog::builder()
         .heading("Startup checks failed")
-        .body(validation.body())
+        .body(validation.to_string())
         .close_response("close")
         .default_response("close")
         .build();

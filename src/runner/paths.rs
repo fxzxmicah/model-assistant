@@ -1,4 +1,5 @@
 use std::env;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
@@ -97,8 +98,11 @@ impl StartupValidation {
         !self.errors.is_empty()
     }
 
-    pub fn body(&self) -> String {
-        self.errors.join("\n")
+}
+
+impl fmt::Display for StartupValidation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.errors.join("\n"))
     }
 }
 

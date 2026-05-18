@@ -133,15 +133,21 @@ mod surface_imp {
             Some(font_desc)
         }
 
+        fn create_layout(&self, widget: &super::ConsoleSurface, text: &str) -> pango::Layout {
+            let context = widget.pango_context();
+            let layout = pango::Layout::new(&context);
+            if let Some(desc) = self.font_description(widget) {
+                layout.set_font_description(Some(&desc));
+            }
+            layout.set_text(text);
+            layout
+        }
+
         fn grid_metrics(&self, widget: &super::ConsoleSurface) -> GridMetrics {
             let context = widget.pango_context();
             let font_desc = self.font_description(widget);
 
-            let digit_layout = pango::Layout::new(&context);
-            if let Some(desc) = font_desc.as_ref() {
-                digit_layout.set_font_description(Some(desc));
-            }
-            digit_layout.set_text("0");
+            let digit_layout = self.create_layout(widget, "0");
             let (cell_width, _) = digit_layout.pixel_size();
 
             let metrics = context.metrics(font_desc.as_ref(), None);
@@ -155,7 +161,6 @@ mod surface_imp {
                 baseline: ascent,
             }
         }
-
 
         fn wrap_columns(&self, available_width: i32, metrics: GridMetrics, max_columns: usize) -> usize {
             if available_width <= 0 {
@@ -202,12 +207,7 @@ mod surface_imp {
         ) {
             let span = cluster_width(text) as i32;
 
-            let context = widget.pango_context();
-            let layout = pango::Layout::new(&context);
-            if let Some(desc) = self.font_description(widget) {
-                layout.set_font_description(Some(&desc));
-            }
-            layout.set_text(text);
+            let layout = self.create_layout(widget, text);
             layout.set_width(span.max(1) * metrics.cell_width * pango::SCALE);
             let layout_baseline = ((layout.baseline() + pango::SCALE / 2) / pango::SCALE).max(0);
 
@@ -314,6 +314,10 @@ mod imp {
 
             let surface = ConsoleSurface::new();
             surface.set_monospace(self.monospace.get());
+            surface.set_margin_top(10);
+            surface.set_margin_bottom(10);
+            surface.set_margin_start(8);
+            surface.set_margin_end(8);
             let scroll = gtk4::ScrolledWindow::builder()
                 .hexpand(true)
                 .vexpand(true)
@@ -341,6 +345,7 @@ glib::wrapper! {
 }
 
 
+#[derive(Default)]
 pub struct ConsoleViewBuilder {
     orientation: Option<gtk4::Orientation>,
     hexpand: Option<bool>,
@@ -436,17 +441,7 @@ impl ConsoleViewBuilder {
 
 impl ConsoleView {
     pub fn builder() -> ConsoleViewBuilder {
-        ConsoleViewBuilder {
-            orientation: None,
-            hexpand: None,
-            vexpand: None,
-            focusable: None,
-            margin_top: None,
-            margin_bottom: None,
-            margin_start: None,
-            margin_end: None,
-            monospace: None,
-        }
+        ConsoleViewBuilder::default()
     }
 
     fn surface(&self) -> &ConsoleSurface {
@@ -604,6 +599,11 @@ impl ScreenBuffer {
         &mut self.logical_rows[self.cursor_row]
     }
 
+    fn dirty_cursor_row_cells_mut(&mut self) -> &mut Vec<ScreenCell> {
+        self.mark_dirty(self.cursor_row);
+        self.cursor_row_cells_mut()
+    }
+
     fn ensure_line_width(line: &mut Vec<ScreenCell>, width: usize) {
         while line.len() < width {
             line.push(ScreenCell::Empty);
@@ -667,6 +667,27 @@ impl ScreenBuffer {
         Self::cluster_start(line, col).expect("console column inside the current line should resolve to a cluster start")
     }
 
+    fn previous_cursor_column(&mut self) -> usize {
+        let cursor_col = self.cursor_col;
+        Self::previous_column(self.cursor_row_cells(), cursor_col)
+    }
+
+    fn next_cursor_column(&mut self) -> usize {
+        let cursor_col = self.cursor_col;
+        Self::next_column(self.cursor_row_cells(), cursor_col)
+    }
+
+    fn normalized_cursor_column(&mut self, col: usize) -> usize {
+        Self::normalized_column(self.cursor_row_cells(), col)
+    }
+
+    fn clear_logical_row(&mut self, row: usize) {
+        if row < self.logical_rows.len() && !self.logical_rows[row].is_empty() {
+            self.logical_rows[row].clear();
+            self.mark_dirty(row);
+        }
+    }
+
     fn clear_occupied_cell(line: &mut [ScreenCell], col: usize) {
         let Some((start, end)) = Self::occupied_range(line, col) else {
             return;
@@ -712,17 +733,16 @@ impl ScreenBuffer {
     }
 
     fn put_char(&mut self, ch: char) {
-        self.mark_dirty(self.cursor_row);
         let width = UnicodeWidthChar::width(ch).unwrap_or(1);
         let col = self.cursor_col;
 
         if width == 0 {
-            let line = self.cursor_row_cells_mut();
+            let line = self.dirty_cursor_row_cells_mut();
             Self::append_combining_mark(line, col, ch);
             return;
         }
 
-        let line = self.cursor_row_cells_mut();
+        let line = self.dirty_cursor_row_cells_mut();
         Self::ensure_line_width(line, col + width);
         for occupied in col..(col + width) {
             Self::clear_occupied_cell(line, occupied);
@@ -748,9 +768,7 @@ impl ScreenBuffer {
     }
 
     fn backspace(&mut self) {
-        let col = self.cursor_col;
-        let next_col = Self::previous_column(self.cursor_row_cells(), col);
-        self.cursor_col = next_col;
+        self.cursor_col = self.previous_cursor_column();
     }
 
     fn tab(&mut self) {
@@ -762,29 +780,23 @@ impl ScreenBuffer {
 
     fn move_left(&mut self, count: usize) {
         for _ in 0..count {
-            let col = self.cursor_col;
-            let next_col = Self::previous_column(self.cursor_row_cells(), col);
-            self.cursor_col = next_col;
+            self.cursor_col = self.previous_cursor_column();
         }
     }
 
     fn move_right(&mut self, count: usize) {
         for _ in 0..count {
-            let col = self.cursor_col;
-            let next_col = Self::next_column(self.cursor_row_cells(), col);
-            self.cursor_col = next_col;
+            self.cursor_col = self.next_cursor_column();
         }
     }
 
     fn set_cursor_column(&mut self, col: usize) {
-        let normalized = Self::normalized_column(self.cursor_row_cells(), col);
-        self.cursor_col = normalized;
+        self.cursor_col = self.normalized_cursor_column(col);
     }
 
     fn erase_in_line(&mut self, mode: usize) {
-        self.mark_dirty(self.cursor_row);
         let col = self.cursor_col;
-        let line = self.cursor_row_cells_mut();
+        let line = self.dirty_cursor_row_cells_mut();
         match mode {
             1 => Self::clear_range(line, 0, col.saturating_add(1)),
             2 => line.clear(),
@@ -797,14 +809,10 @@ impl ScreenBuffer {
         match mode {
             1 => {
                 for row in 0..self.cursor_row {
-                    if row < self.logical_rows.len() && !self.logical_rows[row].is_empty() {
-                        self.logical_rows[row].clear();
-                        self.mark_dirty(row);
-                    }
+                    self.clear_logical_row(row);
                 }
-                self.mark_dirty(self.cursor_row);
                 let col = self.cursor_col;
-                let line = self.cursor_row_cells_mut();
+                let line = self.dirty_cursor_row_cells_mut();
                 Self::clear_range(line, 0, col.saturating_add(1));
             }
             2 => {
@@ -814,15 +822,11 @@ impl ScreenBuffer {
                 self.mark_dirty(0);
             }
             _ => {
-                self.mark_dirty(self.cursor_row);
                 let col = self.cursor_col;
-                let line = self.cursor_row_cells_mut();
+                let line = self.dirty_cursor_row_cells_mut();
                 Self::clear_range(line, col, line.len());
                 for row in (self.cursor_row + 1)..self.logical_rows.len() {
-                    if !self.logical_rows[row].is_empty() {
-                        self.logical_rows[row].clear();
-                        self.mark_dirty(row);
-                    }
+                    self.clear_logical_row(row);
                 }
             }
         }

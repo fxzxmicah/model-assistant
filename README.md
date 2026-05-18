@@ -48,14 +48,14 @@ You also need system development packages for GTK 4 and libadwaita.
 
 ## Desktop integration
 
-The application ID is `org.gnome.ModelAssistant`.
+The application ID is `org.gnome.modelassistant`.
 
 This repository ships:
 
-- `data/org.gnome.ModelAssistant.desktop`
-- `data/org.gnome.ModelAssistant.metainfo.xml`
-- `data/org.gnome.ModelAssistant.service.in`
-- `data/icons/hicolor/scalable/apps/org.gnome.ModelAssistant.svg`
+- `data/org.gnome.modelassistant.desktop`
+- `data/org.gnome.modelassistant.metainfo.xml`
+- `data/org.gnome.modelassistant.service.in`
+- `data/icons/hicolor/scalable/apps/org.gnome.modelassistant.svg`
 - `data/dconf/db/distro.d/00-model-assistant-shortcuts`
 - `data/dconf/db/distro.d/locks/00-model-assistant-shortcuts`
 

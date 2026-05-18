@@ -74,6 +74,23 @@ pub struct ModelModeBinding<'a> {
     pub model_override: Option<&'a ModelModeOverride>,
 }
 
+pub struct ResolvedModeBinding<'a> {
+    pub runtime: ModelRuntimeBinding<'a>,
+    pub mode: ModelModeBinding<'a>,
+}
+
+#[derive(Default)]
+pub struct ModeChoices {
+    pub names: Vec<String>,
+    pub selected: String,
+}
+
+pub struct RuntimeChoices {
+    pub names: Vec<String>,
+    pub selected_runtime: String,
+    pub modes: ModeChoices,
+}
+
 fn fallback_model_arg() -> String {
     "--model".to_string()
 }
@@ -208,6 +225,42 @@ impl AppConfig {
             model_runtime,
         })
     }
+
+    pub fn bind_mode<'a>(
+        &'a self,
+        model_id: &str,
+        model: &'a ModelConfig,
+        runtime_name: &str,
+        mode_name: &str,
+    ) -> Result<ResolvedModeBinding<'a>> {
+        let runtime = self.bind_runtime(model_id, model, runtime_name)?;
+        let mode = runtime.bind_mode(mode_name)?;
+        Ok(ResolvedModeBinding { runtime, mode })
+    }
+
+    pub fn mode_choices(
+        &self,
+        model_id: &str,
+        model: &ModelConfig,
+        runtime_name: &str,
+    ) -> Result<ModeChoices> {
+        let runtime = self.bind_runtime(model_id, model, runtime_name)?;
+        Ok(runtime.mode_choices())
+    }
+
+    pub fn runtime_choices(&self, model_id: &str, model: &ModelConfig) -> RuntimeChoices {
+        let names = model.runtime_names();
+        let selected_runtime = model.default_runtime_name();
+        let modes = self
+            .mode_choices(model_id, model, &selected_runtime)
+            .unwrap_or_default();
+
+        RuntimeChoices {
+            names,
+            selected_runtime,
+            modes,
+        }
+    }
 }
 
 impl ModelConfig {
@@ -224,17 +277,47 @@ impl ModelConfig {
     }
 }
 
-impl<'a> ModelRuntimeBinding<'a> {
-    pub fn mode_names(&self) -> Vec<String> {
-        self.runtime.modes.keys().cloned().collect()
+
+impl<'a> ResolvedModeBinding<'a> {
+    pub fn interactive(&self) -> bool {
+        self.mode.mode.interactive
     }
 
-    pub fn default_mode_name(&self) -> String {
-        if self.runtime.modes.contains_key(&self.model_runtime.default_mode) {
-            return self.model_runtime.default_mode.clone();
-        }
+    pub fn executable(&self) -> &str {
+        &self.mode.mode.executable
+    }
 
-        self.runtime.modes.keys().next().cloned().unwrap_or_default()
+    pub fn mode_args(&self) -> &[String] {
+        &self.mode.mode.args
+    }
+
+    pub fn runtime_args(&self) -> &[String] {
+        &self.runtime.model_runtime.args
+    }
+
+    pub fn model_arg(&self) -> &str {
+        &self.runtime.runtime.model_arg
+    }
+
+    pub fn runtime_env(&self) -> &BTreeMap<String, String> {
+        &self.runtime.model_runtime.env
+    }
+
+    pub fn mode_override(&self) -> Option<&'a ModelModeOverride> {
+        self.mode.model_override
+    }
+}
+
+impl<'a> ModelRuntimeBinding<'a> {
+    pub fn mode_choices(&self) -> ModeChoices {
+        let names = self.runtime.modes.keys().cloned().collect();
+        let selected = if self.runtime.modes.contains_key(&self.model_runtime.default_mode) {
+            self.model_runtime.default_mode.clone()
+        } else {
+            self.runtime.modes.keys().next().cloned().unwrap_or_default()
+        };
+
+        ModeChoices { names, selected }
     }
 
     pub fn bind_mode(&self, mode_name: &str) -> Result<ModelModeBinding<'a>> {

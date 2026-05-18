@@ -14,7 +14,7 @@ use crate::app::context::AppContext;
 use crate::app::startup::{preflight, present_startup_failure_dialog};
 use crate::runner::paths::StartupValidation;
 
-const APP_ID: &str = "org.gnome.ModelAssistant";
+const APP_ID: &str = "org.gnome.modelassistant";
 
 enum StartupState {
     Pending,

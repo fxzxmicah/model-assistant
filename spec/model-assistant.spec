@@ -1,8 +1,8 @@
 Name:           model-assistant
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        GNOME desktop application for launching local AI model runtimes
-URL:            https://github.com/fxzxmicah/Model-Assistant
+URL:            https://github.com/fxzxmicah/model-assistant
 License:        MIT
 
 Source0:        %{url}/archive/refs/tags/%{version}.tar.gz#/%{name}-%{version}.tar.gz
@@ -34,19 +34,16 @@ console pages for output and interactive input.
 %cargo_build
 
 %install
-%cargo_install
-
-install -d %{buildroot}%{_libexecdir}/%{name}
-mv %{buildroot}%{_bindir}/runner-keeper \
-   %{buildroot}%{_libexecdir}/%{name}/runner-keeper
+install -Dpm0755 target/rpm/model-assistant %{buildroot}%{_bindir}/model-assistant
+install -Dpm0755 target/rpm/runner-keeper %{buildroot}%{_libexecdir}/%{name}/runner-keeper
 
 install -Dpm0644 \
-    data/org.gnome.ModelAssistant.metainfo.xml \
-    %{buildroot}%{_metainfodir}/org.gnome.ModelAssistant.metainfo.xml
+    data/org.gnome.modelassistant.metainfo.xml \
+    %{buildroot}%{_metainfodir}/org.gnome.modelassistant.metainfo.xml
 
 install -Dpm0644 \
-    data/icons/hicolor/scalable/apps/org.gnome.ModelAssistant.svg \
-    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/org.gnome.ModelAssistant.svg
+    data/icons/hicolor/scalable/apps/org.gnome.modelassistant.svg \
+    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/org.gnome.modelassistant.svg
 
 install -Dpm0644 \
     data/dconf/db/distro.d/00-model-assistant-shortcuts \
@@ -58,16 +55,16 @@ install -Dpm0644 \
 
 desktop-file-install \
     --dir=%{buildroot}%{_datadir}/applications \
-    data/org.gnome.ModelAssistant.desktop
+    data/org.gnome.modelassistant.desktop
 
 install -d %{buildroot}%{_datadir}/dbus-1/services
 sed 's#@bindir@#%{_bindir}#g' \
-    data/org.gnome.ModelAssistant.service.in \
-    > %{buildroot}%{_datadir}/dbus-1/services/org.gnome.ModelAssistant.service
+    data/org.gnome.modelassistant.service.in \
+    > %{buildroot}%{_datadir}/dbus-1/services/org.gnome.modelassistant.service
 
 %check
-desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.ModelAssistant.desktop
-appstreamcli validate --no-net --pedantic %{buildroot}%{_metainfodir}/org.gnome.ModelAssistant.metainfo.xml
+desktop-file-validate %{buildroot}%{_datadir}/applications/org.gnome.modelassistant.desktop
+appstreamcli validate --no-net --pedantic %{buildroot}%{_metainfodir}/org.gnome.modelassistant.metainfo.xml
 
 %post
 if [ -x %{_bindir}/dconf ]; then
@@ -84,13 +81,16 @@ fi
 %doc README.md examples/assistant.toml
 %{_bindir}/model-assistant
 %{_libexecdir}/%{name}/runner-keeper
-%{_datadir}/applications/org.gnome.ModelAssistant.desktop
-%{_metainfodir}/org.gnome.ModelAssistant.metainfo.xml
-%{_datadir}/dbus-1/services/org.gnome.ModelAssistant.service
-%{_datadir}/icons/hicolor/scalable/apps/org.gnome.ModelAssistant.svg
+%{_datadir}/applications/org.gnome.modelassistant.desktop
+%{_metainfodir}/org.gnome.modelassistant.metainfo.xml
+%{_datadir}/dbus-1/services/org.gnome.modelassistant.service
+%{_datadir}/icons/hicolor/scalable/apps/org.gnome.modelassistant.svg
 %config(noreplace) %{_sysconfdir}/dconf/db/distro.d/00-model-assistant-shortcuts
 %config(noreplace) %{_sysconfdir}/dconf/db/distro.d/locks/00-model-assistant-shortcuts
 
 %changelog
-* Fri May 16 2026 Fxzx micah <48860358+fxzxmicah@users.noreply.github.com> - 0.1.0-1
+* Mon May 18 2026 Fxzx micah <48860358+fxzxmicah@users.noreply.github.com> - 0.2.0-1
+- Refactor the code
+
+* Sat May 16 2026 Fxzx micah <48860358+fxzxmicah@users.noreply.github.com> - 0.1.0-1
 - Initial Fedora package

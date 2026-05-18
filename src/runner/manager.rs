@@ -10,6 +10,7 @@ use anyhow::{Result, anyhow};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
 
+use crate::runner::ipc::KeeperStatus;
 use crate::runner::keeper::spawn_keeper_process;
 use crate::runner::paths::ResolvedPaths;
 use crate::runner::report::RunnerWarnings;
@@ -24,10 +25,6 @@ pub struct KeeperHandle {
     pub warnings: RunnerWarnings,
 }
 
-pub enum RunnerInitialization {
-    Ready(RunnerWarnings),
-    Fatal(String),
-}
 
 pub struct RunnerManager {
     paths: ResolvedPaths,
@@ -44,15 +41,15 @@ impl RunnerManager {
         }
     }
 
-    pub fn initialize(&self) -> RunnerInitialization {
+    pub fn initialize(&self) -> KeeperStatus {
         if self.keeper.borrow().is_some() {
-            return RunnerInitialization::Ready(RunnerWarnings::new());
+            return KeeperStatus::ready(RunnerWarnings::new());
         }
 
         let helper_path = match keeper_search_path() {
             Ok(path) => path,
             Err(error) => {
-                return RunnerInitialization::Fatal(format!(
+                return KeeperStatus::error(format!(
                     "failed to resolve runner keeper search path: {error}"
                 ));
             }
@@ -72,9 +69,9 @@ impl RunnerManager {
             Ok(handle) => {
                 let warnings = handle.warnings.clone();
                 self.keeper.replace(Some(handle));
-                RunnerInitialization::Ready(warnings)
+                KeeperStatus::ready(warnings)
             }
-            Err(error) => RunnerInitialization::Fatal(format!(
+            Err(error) => KeeperStatus::error(format!(
                 "failed to start runner keeper: {error}"
             )),
         }

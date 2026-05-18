@@ -10,11 +10,15 @@ use libadwaita::prelude::*;
 
 use crate::app::console::ConsoleView;
 use crate::app::context::AppContext;
-use crate::core::config::{AppConfig, ModelConfig, ModelRuntimeBinding};
+use crate::core::config::{AppConfig, ModeChoices, ModelConfig, ResolvedModeBinding, RuntimeChoices};
 use crate::launch::session::{LaunchPlan, ProcessEvent, RunningProcess};
-use crate::runner::manager::RunnerInitialization;
+use crate::runner::ipc::KeeperStatus;
 
+const APP_ID: &str = "org.gnome.modelassistant";
 const WINDOW_TITLE: &str = "Model Assistant";
+const ABOUT_DEVELOPER_NAME: &str = "Model Assistant Contributors";
+const ABOUT_WEBSITE_URL: &str = "https://github.com/fxzxmicah/model-assistant";
+const ABOUT_ISSUES_URL: &str = "https://github.com/fxzxmicah/model-assistant/issues";
 const RUNNING_ICON: &str = "media-playback-start-symbolic";
 const STOPPED_ICON: &str = "media-playback-stop-symbolic";
 
@@ -76,6 +80,11 @@ pub fn build(app: &adw::Application, bootstrap: AppContext) {
         .title("Model Console")
         .subtitle(bootstrap.paths.runner_root.display().to_string())
         .build();
+    let about_button = gtk4::Button::builder()
+        .icon_name("help-about-symbolic")
+        .tooltip_text("About Model Assistant")
+        .build();
+    content_header.pack_end(&about_button);
     content_header.set_title_widget(Some(&content_title));
     content_toolbar.add_top_bar(&content_header);
     content_toolbar.set_content(Some(&stack));
@@ -100,6 +109,13 @@ pub fn build(app: &adw::Application, bootstrap: AppContext) {
         .default_height(900)
         .content(&toast_overlay)
         .build();
+
+    let window_weak_for_about = window.downgrade();
+    about_button.connect_clicked(move |_| {
+        if let Some(window) = window_weak_for_about.upgrade() {
+            present_about_dialog(&window);
+        }
+    });
 
     let state_for_close = state.clone();
     window.connect_close_request(move |window| {
@@ -136,25 +152,37 @@ fn present_alert_dialog(window: &adw::ApplicationWindow, heading: &str, body: &s
     dialog.present(Some(window));
 }
 
+fn present_about_dialog(window: &adw::ApplicationWindow) {
+    let about = adw::AboutDialog::new();
+    about.set_application_name(WINDOW_TITLE);
+    about.set_application_icon(APP_ID);
+    about.set_developer_name(ABOUT_DEVELOPER_NAME);
+    about.set_version(env!("CARGO_PKG_VERSION"));
+    about.set_license_type(gtk4::License::MitX11);
+    about.set_developers(&[ABOUT_DEVELOPER_NAME]);
+    about.set_website(ABOUT_WEBSITE_URL);
+    about.set_issue_url(ABOUT_ISSUES_URL);
+    about.present(Some(window));
+}
+
 fn present_runner_initialization(
     window: glib::WeakRef<adw::ApplicationWindow>,
-    initialization: RunnerInitialization,
+    initialization: KeeperStatus,
 ) {
-    match initialization {
-        RunnerInitialization::Ready(warnings) => {
-            if warnings.is_empty() {
-                return;
-            }
-
-            if let Some(window) = window.upgrade() {
-                let body = warnings.body();
-                present_alert_dialog(&window, "Runner initialized with warnings", &body);
-            }
+    if let Some(warnings) = initialization.warnings() {
+        if warnings.is_empty() {
+            return;
         }
-        RunnerInitialization::Fatal(message) => {
-            if let Some(window) = window.upgrade() {
-                present_alert_dialog(&window, "Runner failed to initialize", &message);
-            }
+
+        if let Some(window) = window.upgrade() {
+            present_alert_dialog(&window, "Runner initialized with warnings", &warnings.to_string());
+        }
+        return;
+    }
+
+    if let Some(message) = initialization.error_message() {
+        if let Some(window) = window.upgrade() {
+            present_alert_dialog(&window, "Runner failed to initialize", message);
         }
     }
 }
@@ -200,30 +228,6 @@ impl ModelSelection {
             mode_name,
         }
     }
-}
-
-struct ModeChoices {
-    names: Vec<String>,
-    selected: String,
-}
-
-fn resolve_mode_choices(
-    config: &AppConfig,
-    model_id: &str,
-    model: &ModelConfig,
-    runtime_name: &str,
-) -> ModeChoices {
-    let binding = config.bind_runtime(model_id, model, runtime_name).ok();
-    let names = binding
-        .as_ref()
-        .map(ModelRuntimeBinding::mode_names)
-        .unwrap_or_default();
-    let selected = binding
-        .as_ref()
-        .map(ModelRuntimeBinding::default_mode_name)
-        .unwrap_or_default();
-
-    ModeChoices { names, selected }
 }
 
 struct RuntimeControls {
@@ -353,22 +357,25 @@ impl ModelView {
             .spacing(12)
             .build();
 
-        let runtime_names = model.runtime_names();
-        let runtime_model = gtk4::StringList::new(&[]);
-        for runtime_name in &runtime_names {
-            runtime_model.append(runtime_name);
-        }
-        let runtime_dropdown = gtk4::DropDown::builder().model(&runtime_model).build();
-        let initial_runtime = model.default_runtime_name();
-        runtime_dropdown.set_selected(index_of(&runtime_names, &initial_runtime).unwrap_or(0) as u32);
+        let RuntimeChoices {
+            names: runtime_names,
+            selected_runtime: initial_runtime,
+            modes,
+        } = config.runtime_choices(model_id, model);
+        let ModeChoices {
+            names: mode_names,
+            selected: selected_mode,
+        } = modes;
 
-        let mode_choices = resolve_mode_choices(config, model_id, model, &initial_runtime);
+        let runtime_model = gtk4::StringList::new(&[]);
+        populate_string_list(&runtime_model, &runtime_names);
+        let runtime_dropdown = gtk4::DropDown::builder().model(&runtime_model).build();
+        select_dropdown_value(&runtime_dropdown, &runtime_names, &initial_runtime);
+
         let mode_model = gtk4::StringList::new(&[]);
-        for mode_name in &mode_choices.names {
-            mode_model.append(mode_name);
-        }
+        populate_string_list(&mode_model, &mode_names);
         let mode_dropdown = gtk4::DropDown::builder().model(&mode_model).build();
-        mode_dropdown.set_selected(index_of(&mode_choices.names, &mode_choices.selected).unwrap_or(0) as u32);
+        select_dropdown_value(&mode_dropdown, &mode_names, &selected_mode);
 
         let start_button = gtk4::Button::builder()
             .label("Start")
@@ -394,7 +401,7 @@ impl ModelView {
             mode_model,
             start_button,
             stop_button,
-            initial_selection: ModelSelection::new(initial_runtime, mode_choices.selected),
+            initial_selection: ModelSelection::new(initial_runtime, selected_mode),
             widget,
         }
     }
@@ -405,10 +412,10 @@ impl ModelView {
             .hexpand(true)
             .vexpand(true)
             .focusable(false)
-            .margin_top(12)
-            .margin_bottom(12)
-            .margin_start(12)
-            .margin_end(12)
+            .margin_top(4)
+            .margin_bottom(4)
+            .margin_start(4)
+            .margin_end(4)
             .monospace(true)
             .build()
     }
@@ -466,17 +473,9 @@ impl ModelView {
         (sidebar_row, status_icon)
     }
 
-    fn replace_modes(&self, mode_names: &[String], selected_mode: &str) {
-        while self.mode_model.n_items() > 0 {
-            self.mode_model.remove(0);
-        }
-
-        for mode_name in mode_names {
-            self.mode_model.append(mode_name);
-        }
-
-        self.mode_dropdown
-            .set_selected(index_of(mode_names, selected_mode).unwrap_or(0) as u32);
+    fn replace_modes(&self, choices: &ModeChoices) {
+        populate_string_list(&self.mode_model, &choices.names);
+        select_dropdown_value(&self.mode_dropdown, &choices.names, &choices.selected);
     }
 }
 
@@ -543,41 +542,46 @@ impl ModelRuntime {
         }
     }
 
-    fn current_selection(&self) -> ModelSelection {
-        self.selection.borrow().clone()
+    fn with_selection<T>(&self, f: impl FnOnce(&ModelSelection) -> T) -> T {
+        let selection = self.selection.borrow();
+        f(&selection)
     }
 
     fn build_launch_plan(&self) -> Result<LaunchPlan> {
-        let selection = self.current_selection();
-        LaunchPlan::build(
-            &self.state.bootstrap.config,
-            &self.model_id,
-            &self.model,
-            &selection.runtime_name,
-            &selection.mode_name,
-            &self.state.bootstrap.paths,
-            &self.state.bootstrap.runner,
-        )
+        self.with_selection(|selection| {
+            LaunchPlan::build(
+                &self.state.bootstrap.config,
+                &self.model_id,
+                &self.model,
+                &selection.runtime_name,
+                &selection.mode_name,
+                &self.state.bootstrap.paths,
+                &self.state.bootstrap.runner,
+            )
+        })
     }
 
-    fn runtime_binding(&self) -> Result<ModelRuntimeBinding<'_>> {
-        let selection = self.current_selection();
-        self.state
-            .bootstrap
-            .config
-            .bind_runtime(&self.model_id, &self.model, &selection.runtime_name)
+    fn selected_mode_binding(&self) -> Result<ResolvedModeBinding<'_>> {
+        self.with_selection(|selection| {
+            self.state.bootstrap.config.bind_mode(
+                &self.model_id,
+                &self.model,
+                &selection.runtime_name,
+                &selection.mode_name,
+            )
+        })
     }
 
     fn reload_modes_for_selected_runtime(&self) {
-        let selection = self.current_selection();
-        let mode_choices = resolve_mode_choices(
-            &self.state.bootstrap.config,
-            &self.model_id,
-            &self.model,
-            &selection.runtime_name,
-        );
+        let mode_choices = self.with_selection(|selection| {
+            self.state
+                .bootstrap
+                .config
+                .mode_choices(&self.model_id, &self.model, &selection.runtime_name)
+                .unwrap_or_default()
+        });
         self.selection.borrow_mut().mode_name = mode_choices.selected.clone();
-        self.view.replace_modes(&mode_choices.names, &mode_choices.selected);
+        self.view.replace_modes(&mode_choices);
     }
 
     fn start_process(self: &Rc<Self>) -> Result<()> {
@@ -627,16 +631,23 @@ impl ModelRuntime {
     }
 
     fn handle_process_event(self: &Rc<Self>, event: ProcessEvent) -> ControlFlow {
-        match event {
-            ProcessEvent::Output { data } => {
-                self.append_output(&data);
-                ControlFlow::Continue
-            }
-            ProcessEvent::Exited => {
-                self.finish_process();
-                ControlFlow::Break
-            }
+        if let Some(data) = event.child_output() {
+            self.append_output(data);
+            return ControlFlow::Continue;
         }
+
+        if let Some(message) = event.keeper_error_message() {
+            self.view.show_error_dialog("Runner error", message);
+            self.finish_process();
+            return ControlFlow::Break;
+        }
+
+        if event.is_child_exited() {
+            self.finish_process();
+            return ControlFlow::Break;
+        }
+
+        ControlFlow::Continue
     }
 
     fn finish_process(&self) {
@@ -656,11 +667,8 @@ impl ModelRuntime {
     }
 
     fn selected_mode_is_interactive(&self) -> bool {
-        let selection = self.current_selection();
-        self.runtime_binding()
-            .ok()
-            .and_then(|binding| binding.bind_mode(&selection.mode_name).ok())
-            .map(|mode| mode.mode.interactive)
+        self.selected_mode_binding()
+            .map(|binding| binding.interactive())
             .unwrap_or(false)
     }
 
@@ -718,6 +726,33 @@ impl ModelView {
         self.toast_overlay
             .add_toast(adw::Toast::new(&format!("{heading}: {body}")));
     }
+
+    fn show_error_dialog(&self, heading: &str, body: &str) {
+        let Some(window) = self
+            .toast_overlay
+            .root()
+            .and_then(|root| root.downcast::<adw::ApplicationWindow>().ok())
+        else {
+            self.show_error(heading, body);
+            return;
+        };
+
+        present_alert_dialog(&window, heading, body);
+    }
+}
+
+fn populate_string_list(model: &gtk4::StringList, values: &[String]) {
+    while model.n_items() > 0 {
+        model.remove(0);
+    }
+
+    for value in values {
+        model.append(value);
+    }
+}
+
+fn select_dropdown_value(dropdown: &gtk4::DropDown, values: &[String], selected: &str) {
+    dropdown.set_selected(index_of(values, selected).unwrap_or(0) as u32);
 }
 
 fn index_of(items: &[String], target: &str) -> Option<usize> {

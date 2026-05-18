@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -10,12 +12,6 @@ impl RunnerWarnings {
         Self::default()
     }
 
-    pub fn from_message(message: impl Into<String>) -> Self {
-        Self {
-            messages: vec![message.into()],
-        }
-    }
-
     pub fn push(&mut self, message: impl Into<String>) {
         self.messages.push(message.into());
     }
@@ -24,7 +20,10 @@ impl RunnerWarnings {
         self.messages.is_empty()
     }
 
-    pub fn body(&self) -> String {
-        self.messages.join("\n")
+}
+
+impl fmt::Display for RunnerWarnings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.messages.join("\n"))
     }
 }

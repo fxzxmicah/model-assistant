@@ -13,7 +13,7 @@ use nix::sys::signal::{Signal, kill};
 use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::{ForkResult, Pid};
 
-use crate::runner::ipc::{ClientMessage, ServerMessage, read_json_line, write_json_line};
+use crate::runner::ipc::{ClientMessage, KeeperMessage, KeeperStatus, KeeperFrame, read_json_line, write_json_line};
 use crate::runner::mounts::{KeeperRuntime, enter_keeper_context};
 use crate::runner::paths::ResolvedPaths;
 
@@ -203,21 +203,11 @@ fn handle_client(stream: UnixStream) -> Result<()> {
     let mut reader = BufReader::new(reader_stream);
     let request: ClientMessage = read_json_line(&mut reader)?;
     let ClientMessage::Spawn { argv, env } = request else {
-        send_server_message(
-            &writer,
-            &ServerMessage::Error {
-                message: "first runner message must be spawn".to_string(),
-            },
-        )?;
+        send_keeper_status(&writer, KeeperStatus::error("first runner message must be spawn"))?;
         return Ok(());
     };
     if argv.is_empty() {
-        send_server_message(
-            &writer,
-            &ServerMessage::Error {
-                message: "spawn argv is empty".to_string(),
-            },
-        )?;
+        send_keeper_status(&writer, KeeperStatus::error("spawn argv is empty"))?;
         return Ok(());
     }
 
@@ -233,29 +223,38 @@ fn handle_client(stream: UnixStream) -> Result<()> {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            send_server_message(
+            send_keeper_status(
                 &writer,
-                &ServerMessage::Error {
-                    message: format!("failed to spawn {}: {error}", argv.join(" ")),
-                },
+                KeeperStatus::error(format!("failed to spawn {}: {error}", argv.join(" "))),
             )?;
             return Ok(());
         }
     };
 
     let pid = i32::try_from(child.id()).context("child pid overflowed i32")?;
-    send_server_message(&writer, &ServerMessage::Spawned { pid })?;
+    send_child_message(&writer, KeeperMessage::ChildSpawned)?;
 
-    let stdin = Arc::new(Mutex::new(child.stdin.take().context("child stdin pipe was not available")?));
-    let stdout = child.stdout.take().context("child stdout pipe was not available")?;
-    let stderr = child.stderr.take().context("child stderr pipe was not available")?;
+    let stdin = Arc::new(Mutex::new(
+        child
+            .stdin
+            .take()
+            .context("child stdin pipe was not available")?,
+    ));
+    let stdout = child
+        .stdout
+        .take()
+        .context("child stdout pipe was not available")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("child stderr pipe was not available")?;
     {
         let writer = writer.clone();
-        thread::spawn(move || relay_output(stdout, writer));
+        thread::spawn(move || relay_output(stdout, writer, KeeperMessage::child_stdout));
     }
     {
         let writer = writer.clone();
-        thread::spawn(move || relay_output(stderr, writer));
+        thread::spawn(move || relay_output(stderr, writer, KeeperMessage::child_stderr));
     }
     {
         let stdin = stdin.clone();
@@ -263,7 +262,7 @@ fn handle_client(stream: UnixStream) -> Result<()> {
     }
 
     child.wait()?;
-    send_server_message(&writer, &ServerMessage::Exited)?;
+    send_child_message(&writer, KeeperMessage::ChildExited)?;
     Ok(())
 }
 
@@ -292,12 +291,25 @@ fn handle_client_commands(
     }
 }
 
-fn send_server_message(writer: &Arc<Mutex<UnixStream>>, message: &ServerMessage) -> Result<()> {
+
+fn send_keeper_status(writer: &Arc<Mutex<UnixStream>>, status: KeeperStatus) -> Result<()> {
+    send_keeper_frame(writer, &KeeperFrame::status(status))
+}
+
+fn send_child_message(writer: &Arc<Mutex<UnixStream>>, message: KeeperMessage) -> Result<()> {
+    send_keeper_frame(writer, &KeeperFrame::child(message))
+}
+
+fn send_keeper_frame(writer: &Arc<Mutex<UnixStream>>, message: &KeeperFrame) -> Result<()> {
     let mut writer = writer.lock().expect("writer mutex poisoned");
     write_json_line(&mut *writer, message)
 }
 
-fn relay_output<R>(mut reader: R, writer: Arc<Mutex<UnixStream>>)
+fn relay_output<R>(
+    mut reader: R,
+    writer: Arc<Mutex<UnixStream>>,
+    message_for_chunk: fn(Vec<u8>) -> KeeperMessage,
+)
 where
     R: Read + Send + 'static,
 {
@@ -306,15 +318,13 @@ where
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(size) => {
-                let _ = send_server_message(&writer, &ServerMessage::Output {
-                    data: buffer[..size].to_vec(),
-                });
+                let message = message_for_chunk(buffer[..size].to_vec());
+                let _ = send_child_message(&writer, message);
             }
             Err(_) => break,
         }
     }
 }
-
 
 fn print_ready(warnings: &crate::runner::report::RunnerWarnings) -> Result<()> {
     let stdout = std::io::stdout();

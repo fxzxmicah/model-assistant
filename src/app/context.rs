@@ -10,3 +10,10 @@ pub struct AppContext {
     pub paths: ResolvedPaths,
     pub runner: Rc<RunnerManager>,
 }
+
+impl AppContext {
+    pub fn new(config: AppConfig, paths: ResolvedPaths) -> Self {
+        let runner = Rc::new(RunnerManager::new(paths.clone(), config.runner.env.clone()));
+        Self { config, paths, runner }
+    }
+}
